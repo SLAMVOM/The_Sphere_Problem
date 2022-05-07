@@ -1,1 +1,6 @@
 build/
+bin/
+*.zip
+personal_note.txt
+bugs/
+
