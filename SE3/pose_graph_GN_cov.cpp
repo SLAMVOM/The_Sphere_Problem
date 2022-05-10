@@ -6,22 +6,22 @@
 *
 * Created by: MT
 * Creation Date: 2022-May-04
-* Previous Edit: 2022-May-07
+* Previous Edit: 2022-May-10
 *****************************************************************/
 
 /* Data format of the sphere.g2o file:
-* The first part of the data starts with the tag "Vertex_SE3:QUAT", 
+* The first part of the data starts with the tag "Vertex_SE3:QUAT",
 * indicating a node/vertex of the pose graph. The second part of the file
-* includes data entries start with "EDGE_SE3:QUAT", which indicates an edge 
-* within the graph that connects two poses. The g2o file uses quaternion 
+* includes data entries start with "EDGE_SE3:QUAT", which indicates an edge
+* within the graph that connects two poses. The g2o file uses quaternion
 * and 3D translation vector to represent poses.
-* 
+*
 * Each VERTEX_SE3:QUAT node has the following eight fields: ID, tx, ty, tz, qx, qy, qz, qw.
 * After the node ID, the first three are translation vector elements, while the last four
-* are unit quaternion elements that represent rotation. 
+* are unit quaternion elements that represent rotation.
 * The transformation matrix can be thought of as a transformation from the current frame with an index specified by the 'ID' entry
 * to the  inertial frame, Frame 0 (assumed to be Identity).
-* One may also interpret the transformation as: 
+* One may also interpret the transformation as:
 * a transformation matrix representing the pose of the stationary inertial frame (i.e., Frame 0) relative to the ID's Frame.
 * That is the given elements recover a matrix of: T_{0a}, where a is ID; and 0 indicates the inertial frame.
 * Thus, T_{0a} = [R_{0a} | t_0^{a0}]
@@ -32,7 +32,7 @@
 * That is, the transformation matrix can transfrom a point from Frame ID2 to Frame ID1.
 * One may also interpret the matrix as: a transformation matrix representing pose of Frame ID1 relative to Frame ID2.
 * The remaining 21 elements are the diagonal and upper right part of an information matrix related to the current relative transformation.
-* Since the information matrix is a symmetric matrix, 
+* Since the information matrix is a symmetric matrix,
 * providing half of the matrix and the diagonal will be enough to recover the whole matrix.
 * Therefore, the transformation matrix is from Frame ID2 to Frame ID1,
 * or called the pose of Frame ID2 w.r.t. Frame ID1: T_{ab}
@@ -62,6 +62,9 @@
 #include <Eigen/SparseCholesky>
 
 #include "lie_utils.h"
+#include "pose_covariance.h"
+
+#define CAL_COV     1   // a flag to set if covariance should be calculated, any int > 0 means to calculate
 
 using namespace std;
 
@@ -89,7 +92,7 @@ int main(int argc, char **argv) {
 
     //// Define some user-specified variables for the problem
     int num_max_iter = 25; // the maximum number of iterations for the optimization
-    double delta_thresh = 1e-5; // threshold to determine if the change of variables is small enough to claim a convergence
+    double delta_thresh = 1e-4; // threshold to determine if the change of variables is small enough to claim a convergence
     int converge_flag = 0; // a flag to denote if convergence has been reached, > 0 denotes convergence
 
 
@@ -106,6 +109,8 @@ int main(int argc, char **argv) {
     std::vector<Matrix6d, Eigen::aligned_allocator<Matrix6d>> info_matrices; // store the information matrices
     std::vector<int*> edge_vertices;// store the vertex indices related to a particular edge
     std::vector<Matrix4d, Eigen::aligned_allocator<Matrix4d>> edge_T_matrices; // store the transformation matrices between two vertex frames
+    //if the CAL_COV flag is greater than 0, then calculating covariance associated with each pose
+    std::map<int, Matrix6d, std::less<int>, Eigen::aligned_allocator<std::pair<const int, Matrix6d>>> vertex_covariances;
 
     // Read the data file into appropriate data variables
     while (!fin.eof()) {
@@ -126,16 +131,16 @@ int main(int argc, char **argv) {
             // Here, converting the translation vector and unit quaternion to a SE(3) Transformation matrix
             // when representing a unit quaternion the real part w should come the first
             Vector4d tmp_qua(v[6], v[3], v[4], v[5]); // a temporary vector representing the unit quaternion
-            
+
             double ang_axis[3]; // angle-axis representation of the same rotatoin as the unit quaternion
             unitQuaternionToAngleAxis(tmp_qua.data(), ang_axis); // convert unit quaternion to angle-axis vector
-            
+
             double phi_hat_arr[9]; // this array stores the row-major skew-symmetric matrix for the rotation vector
             vecHat(ang_axis, phi_hat_arr); // convert the angle-axis vector to a skew-symmetric matrix stored in an 1d array
-            
+
             Eigen::Matrix3d R_mat; // this is the rotation matrix associated with the unit quaternion
             expPhiHat(Eigen::Map<Eigen::Matrix<double, 3, 3, Eigen::RowMajor>>(phi_hat_arr), R_mat); // obtain the rotation matrix
-            
+
             // construct the 4 x 4 transformation matrix
             Matrix4d T_mat = Matrix4d::Zero(); // reset the matrix to zeros
             T_mat.block<3, 3>(0, 0) = R_mat; // the upper-left 3x3 block is the rotation
@@ -167,24 +172,24 @@ int main(int argc, char **argv) {
             // Here, converting the translation vector and unit quaternion to a SE(3) Transformation matrix
             // when representing a unit quaternion the real part w should come the first
             Vector4d tmp_qua(T_vec[6], T_vec[3], T_vec[4], T_vec[5]); // a temporary vector representing the unit quaternion
-            
+
             double ang_axis[3]; // angle-axis representation of the same rotatoin as the unit quaternion
             unitQuaternionToAngleAxis(tmp_qua.data(), ang_axis); // convert unit quaternion to angle-axis vector
-            
+
             double phi_hat_arr[9]; // this array stores the row-major skew-symmetric matrix for the rotation vector
             vecHat(ang_axis, phi_hat_arr); // convert the angle-axis vector to a skew-symmetric matrix stored in an 1d array
-            
+
             Eigen::Matrix3d R_mat; // this is the rotation matrix associated with the unit quaternion
             expPhiHat(Eigen::Map<Eigen::Matrix<double, 3, 3, Eigen::RowMajor>>(phi_hat_arr), R_mat); // obtain the rotation matrix
-            
+
             // construct the 4 x 4 transformation matrix
             Matrix4d T_mat = Matrix4d::Zero(); // reset the matrix to zeros
             T_mat.block<3, 3>(0, 0) = R_mat; // the upper-left 3x3 block is the rotation
             T_mat.block<3, 1>(0, 3) = Eigen::Vector3d(T_vec[0], T_vec[1], T_vec[2]); // the first 3 elements of the last col is translation
             T_mat(3,3) = 1.0; // set the last element to 1
-            
+
             edge_T_matrices.push_back(T_mat); // store the transformation matrix
-            
+
             // construct the information matrix
             Matrix6d info_mat = Matrix6d::Zero();
             for (int i = 0; i < info_mat.rows(); i++) {
@@ -219,7 +224,7 @@ int main(int argc, char **argv) {
         // A_mat.setZero(); // NOTE: constructing A_mat in advance may possibly lead to out of memory issue when Method 1 (see below) is used
         b_vec.setZero();
 
-        // Instead of using the projection matrix, P_kl as in the derivation, construct a big G matrix 
+        // Instead of using the projection matrix, P_kl as in the derivation, construct a big G matrix
         Eigen::MatrixXd Big_G(6*N_constraints, 6*N_vertices); // this is similar to the Jacobian matrix in Bundle Adjustment
         Big_G.setZero();
 
@@ -278,7 +283,7 @@ int main(int argc, char **argv) {
 
 
             ///////////////// Method 2: Using projection matrix and accumulate A_mat and b_vec /////////////////
-            /* 
+            /*
             ** In theory we can follow the steps as the derivation in Barfoot's book, including the useage of
             ** Projection matrices, P_kl. However, the size of the matrix is large and majority of the data
             ** entries are zeros in the matrix, resulting in very expensive and redudant computation. Most of the
@@ -345,8 +350,19 @@ int main(int argc, char **argv) {
         }
 
 
+        //// calculate covariance matrix related to each pose if CAL_COV is greater than 0
+        if(CAL_COV > 0) {
+            calPoseCovariance(N_vertices, A_mat, vertex_covariances); // using a std::map to store the ID-Cov_mat pairs
+            // to show several calculated covariance matrices
+            for (int l = 2; l < 4; l++) {
+                std::cout << "\nCovariance of pose " << l << ":\n" << vertex_covariances[l] << std::endl;
+            }
+        }
+
+
+
         // //// Check if any convergence threshold is met, if converged, break the optimization loop
-        
+
         if (dx.array().abs().maxCoeff() < delta_thresh) { // L-inf norm is smaller than the threshold
             std::cout << "The L-Inf norm of the update vector is smaller than threshold " <<  delta_thresh
                       << "-> Converged." << std::endl;
@@ -362,7 +378,7 @@ int main(int argc, char **argv) {
     } // end of first layer optimization for loop
 
     if (converge_flag == 0) { // no convergence is claimed
-        std::cout << "\nNo convergence condition was met after " << num_max_iter 
+        std::cout << "\nNo convergence condition was met after " << num_max_iter
                   << " iterations (i.e., num_max_iter specified by the user is reached)." << std::endl;
     }
 
@@ -432,9 +448,3 @@ int main(int argc, char **argv) {
 
     return 0;
 }
-
-
-
-
-
-
