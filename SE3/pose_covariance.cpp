@@ -31,6 +31,7 @@ void calPoseCovariance(const int N_vertices,                      // input
     if (n_rows % N_vertices != 0) {
         std::cout << "The dimension of the input A matrix is not divisible by the number of vertices. Check matrix dimension."
                   << std::endl;
+        exit(1);
     }
 
     // Define an Eigen sparse cholesky solver

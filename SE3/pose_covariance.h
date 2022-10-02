@@ -5,7 +5,7 @@
 * The covariance calculation follows the approach stated in A.3.1 in
 * Prof. Tim Barfoot's book: State Estimation for Robotics
 *
-* Note: To simpliest way to calculate the covariance matrices is to
+* Note: The simpliest way to calculate the covariance matrices is to
 * directly invert the A matrix in the system: A*dx=b. However, the complexity
 * is O(N^3), which will be expensive if the whole problem is large,
 * i.e., contains a large number of poses. Note that, we do not need all the
